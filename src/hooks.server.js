@@ -66,7 +66,7 @@ export const handle = async ({ event, resolve }) => {
     const { pathname } = event.url;
     if(pathname == "/api/collect") return resolve(event);
 
-    const ip_address = "38.248.89.55"; //event.getClientAddress?.() || event.request.headers.get("x-forwarded-for")?.split(",")[0] || null;
+    const ip_address = event.getClientAddress?.() || event.request.headers.get("x-forwarded-for")?.split(",")[0] || null;
     const useragent = event.request.headers.get("user-agent");
     const referer = event.request.headers.get("referer");
     const query = Object.fromEntries(event.url.searchParams.entries());
