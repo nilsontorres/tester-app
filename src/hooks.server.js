@@ -1,3 +1,4 @@
+import { classifyTraffic } from '$lib/detection';
 import { queryIPAddress } from '$lib/ipapi';
 import supabase from '$lib/supabase';
 import { UAParser } from 'ua-parser-js';
@@ -15,6 +16,8 @@ const saveRequest = async (
 
     // Pega os dados do useragent.
     const { browser, os, device, engine, cpu } = UAParser(useragent);
+
+    const detection = classifyTraffic(useragent, headers);
 
     // Cria o registro no banco de dados.
     const { data, error } = await supabase
@@ -52,7 +55,8 @@ const saveRequest = async (
             os_version: os?.version,
             cpu_architecture: cpu?.architecture,
             engine_name: engine?.name,
-            engine_version: engine?.version
+            engine_version: engine?.version,
+            detection: detection
         })
         .select()
         .single();
