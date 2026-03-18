@@ -14,6 +14,8 @@
             id: data?.request?.id,
             screen_width: window.screen?.width ?? null,
             screen_height: window.screen?.height ?? null,
+            is_touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,
+            is_pointer: window.matchMedia('(pointer: fine)').matches,
             loading_time
         };
 

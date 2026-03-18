@@ -64,12 +64,13 @@ const saveRequest = async (
 export const handle = async ({ event, resolve }) => {
     // Pega os dados da requisicao.
     const { pathname } = event.url;
-    if(pathname == "/api/collect") return resolve(event);
 
     const ip_address = event.getClientAddress?.() || event.request.headers.get("x-forwarded-for")?.split(",")[0] || null;
     const useragent = event.request.headers.get("user-agent");
     const referer = event.request.headers.get("referer");
     const query = Object.fromEntries(event.url.searchParams.entries());
+
+    if(pathname == "/api/collect" || useragent.toLocaleLowerCase().includes("vercel")) return resolve(event);
 
     let headers = Object.fromEntries(event.request.headers.entries());
     delete headers["accept"];
