@@ -1,137 +1,171 @@
-/**
- * Classifica tráfego TikTok em:
- * - "user": usuário real
- * - "review": revisão / QA / teste / tráfego interno TikTok
- * - "bot": bot / crawler / preview
- *
- * Regras:
- * - usa apenas user-agent + headers
- * - não depende de query string
- */
-export const classifyTraffic = (userAgent, headers={}) => {
-    const ua = String(userAgent || "").trim();
-    const uaLc = ua.toLowerCase();
-    const h = normalizeHeaders(headers);
+export const categorizeRequest = (userAgent="", headers={}) => {
+    const ua = String(userAgent || "").toLowerCase();
 
-    const secFetchDest = h["sec-fetch-dest"] || "";
-    const secFetchMode = h["sec-fetch-mode"] || "";
-    const secFetchUser = h["sec-fetch-user"] || "";
-    const referer = h["referer"] || "";
-    const xRequestedWith = h["x-requested-with"] || "";
-    const pathname = h[":path"] || h["x-pathname"] || h["pathname"] || "";
+    const normalizedHeaders = Object.fromEntries(
+        Object.entries(headers || {}).map(([k, v]) => [
+        String(k).toLowerCase(),
+        String(v ?? "").toLowerCase()
+        ])
+    );
 
-    const isTikTokAndroidPackage = /com\.zhiliaoapp\.musically(\.go)?/i.test(xRequestedWith);
+    const getHeader = (name) => normalizedHeaders[name.toLowerCase()] || "";
 
-    const hasTikTokIOSHeaders =
-        !!h["x-gorgon"] ||
-        !!h["x-khronos"] ||
-        !!h["x-tt-trace-id"] ||
-        !!h["x-tt-web-proxy"] ||
-        !!h["x-tt-request-tag"];
+    const xRequestedWith = getHeader("x-requested-with");
+    const hasGorgon = !!getHeader("x-gorgon");
+    const hasKhronos = !!getHeader("x-khronos");
+    const hasTtTrace = !!getHeader("x-tt-trace-id");
+    const hasTtProxy = !!getHeader("x-tt-web-proxy");
+    const hasOecSdk = !!getHeader("oec-vc-sdk-version") || !!getHeader("oec-cs-sdk-version");
 
-    const hasTikTokExtraHeaders =
-        hasTikTokIOSHeaders ||
-        !!h["oec-vc-sdk-version"] ||
-        !!h["oec-cs-sdk-version"] ||
-        !!h["rpc-persist-pyxis-policy-v-tnc"] ||
-        !!h["x-bd-kmsv"];
+    // ----------------------------
+    // 1) BOT: crawlers / scrapers
+    // ----------------------------
+    const botUaPatterns = [
+        /facebookexternalhit/,
+        /\bfacebot\b/,
+        /\btwitterbot\b/,
+        /\bslackbot\b/,
+        /\bdiscordbot\b/,
+        /\blinkedinbot\b/,
+        /\bwhatsapp\b.*\bpreview\b/,
+        /\bskypeuripreview\b/,
+        /\btelegrambot\b/,
+        /\bgooglebot\b/,
+        /\bbingbot\b/,
+        /\bduckduckbot\b/,
+        /\byandex(bot)?\b/,
+        /\bbaiduspider\b/,
+        /\bsemrushbot\b/,
+        /\bahrefsbot\b/,
+        /\bapplebot\b/,
+        /\bcrawler\b/,
+        /\bspider\b/,
+        /\bscrapy\b/,
+        /\bheadlesschrome\b/,
+        /\bphantomjs\b/,
+        /\bselenium\b/,
+        /\bplaywright\b/,
+        /\bpuppeteer\b/
+    ];
 
-    const isMainDocumentRequest =
-        secFetchDest.toLowerCase() === "document" &&
-        secFetchMode.toLowerCase() === "navigate";
-
-    const isSubresourceRequest =
-        secFetchDest.toLowerCase() === "image" ||
-        pathname.endsWith("/favicon.ico") ||
-        pathname.endsWith("/apple-touch-icon.png") ||
-        pathname.endsWith("/apple-touch-icon-precomposed.png");
-
-    const hasTikTokReferer = /https?:\/\/(www\.)?tiktok\.com/i.test(referer);
-
-    const isExplicitBotUA =
-        /facebookexternalhit|facebot|twitterbot|bot|crawler|spider/i.test(uaLc);
-
-    const isAppleNetworkingUA =
-        /com\.apple\.webkit\.networking\//i.test(ua);
-
-    const isInternalReviewUA =
-        /thirdlandingpagefeinfra|channel\/local_test|channel\/inhouse|\binhouse\/1\b|\btrill_/i.test(uaLc);
-
-    const isTikTokAppUA =
-        /musical_ly|appname\/musical_ly|appname\/ultralite|bytedancewebview|wkwebview|android webview|; wv\)/i.test(uaLc);
-
-    const isUserLikeTikTokUA =
-        /musical_ly|appname\/musical_ly|appname\/ultralite|bytedancewebview/i.test(uaLc);
-
-    const isSuspiciousGenericDesktopUA =
-        /windows nt|macintosh/i.test(uaLc) &&
-        !isExplicitBotUA &&
-        !isTikTokAndroidPackage &&
-        !hasTikTokIOSHeaders &&
-        !hasTikTokReferer;
-
-    // 1) BOT
-    if (isExplicitBotUA) {
-        return "bot";
+    if (botUaPatterns.some((re) => re.test(ua))) {
+        return {
+        category: "bot",
+        confidence: "high",
+        reason: "bot/crawler token found in user-agent"
+        };
     }
 
-    if (isAppleNetworkingUA && isSubresourceRequest && !hasTikTokExtraHeaders) {
-        return "bot";
+    // -------------------------------------------------
+    // 2) REVIEW: revisão / QA / teste humano do TikTok
+    // -------------------------------------------------
+    const reviewUaPatterns = [
+        /\bchannel\/inhouse\b/,
+        /\bchannel\/local_test\b/,
+        /\binhouse\/1\b/,
+        /\bappname\/trill\b/,
+        /\btrill[_/]/,
+        /\bthirdlandingpagefeinfra\b/,
+        /\bbullet\/1\b/,
+        /\bhybridtag\//,
+        /\bfalcontag\//
+    ];
+
+    const reviewHeaderSignals = [
+        hasTtTrace,
+        hasTtProxy,
+        hasOecSdk
+    ].filter(Boolean).length;
+
+    if (reviewUaPatterns.some((re) => re.test(ua))) {
+        return {
+        category: "review",
+        confidence: "high",
+        reason: "internal/inhouse/local_test/trill pattern found"
+        };
     }
 
-    // 2) REVIEW
-    if (isInternalReviewUA) {
-        return "review";
+    // Regra opcional: se o tráfego tiver cara de stack interna ByteDance/TikTok,
+    // mas não parecer app público comum, classificar como review.
+    const looksInternalTikTok =
+        (ua.includes("bytedancewebview") || ua.includes("trill")) &&
+        (hasTtTrace || hasTtProxy || hasOecSdk);
+
+    if (looksInternalTikTok && !ua.includes("channel/app store") && !ua.includes("channel/googleplay") && !ua.includes("channel/release")) {
+        return {
+        category: "review",
+        confidence: "medium",
+        reason: "internal ByteDance/TikTok test stack markers"
+        };
     }
 
-    if (isSuspiciousGenericDesktopUA) {
-        return "review";
+    // ---------------------------------------------
+    // 3) USER: usuário real no app TikTok/TikTok Go
+    // ---------------------------------------------
+    const userUaPatterns = [
+        /\bappname\/ultralite\b/,
+        /\bappname\/musical_ly\b/,
+        /\bmusical_ly[_/]/,
+        /\bchannel\/app store\b/,
+        /\bchannel\/googleplay\b/,
+        /\bchannel\/release\b/,
+        /\bapp_version\//,
+        /\bregion\/[a-z]{2}\b/,
+        /\bbytelocale\//,
+        /\bbytefulllocale\//
+    ];
+
+    const userHeaderSignals = [
+        xRequestedWith === "com.zhiliaoapp.musically",
+        xRequestedWith === "com.zhiliaoapp.musically.go",
+        hasGorgon,
+        hasKhronos,
+        hasTtTrace,
+        hasTtProxy,
+        hasOecSdk
+    ].filter(Boolean).length;
+
+    if (userUaPatterns.some((re) => re.test(ua))) {
+        return {
+        category: "user",
+        confidence: userHeaderSignals >= 1 ? "high" : "medium",
+        reason: "public TikTok/TikTok Lite app pattern found"
+        };
     }
 
-    if (/chrome\/117/i.test(uaLc) && /windows nt/i.test(uaLc) && !hasTikTokExtraHeaders && !hasTikTokReferer) {
-        return "review";
+    if (xRequestedWith === "com.zhiliaoapp.musically" || xRequestedWith === "com.zhiliaoapp.musically.go") {
+        return {
+        category: "user",
+        confidence: "high",
+        reason: "TikTok Android app package header found"
+        };
     }
 
-    // Caso tipo TikTok, mas sem sinais de clique real e com cara de ambiente controlado
-    if (/bytemod|tiktok-as-ap|bytedance/i.test([h["x-forwarded-for"], h["x-real-ip"], h["forwarded"], ua].join(" ")) && /windows nt/i.test(uaLc)) {
-        return "review";
+    // -------------------------------------------------
+    // 4) Fallback:
+    // - se parece navegador comum -> user
+    // - se não parece nada comum -> bot
+    // -------------------------------------------------
+    const looksLikeNormalBrowser =
+        /mozilla\/5\.0/.test(ua) &&
+        (
+        ua.includes("chrome/") ||
+        ua.includes("safari/") ||
+        ua.includes("applewebkit/") ||
+        ua.includes("wkwebview")
+        );
+
+    if (looksLikeNormalBrowser) {
+        return {
+        category: "user",
+        confidence: "low",
+        reason: "normal browser/webview fallback"
+        };
     }
 
-    // 3) USER
-    if (isUserLikeTikTokUA && (isTikTokAndroidPackage || hasTikTokIOSHeaders || hasTikTokReferer) && (isMainDocumentRequest || isSubresourceRequest)) {
-        return "user";
-    }
-
-    if (isTikTokAndroidPackage && /android webview|; wv\)|appname\/ultralite/i.test(uaLc)) {
-        return "user";
-    }
-
-    if (hasTikTokIOSHeaders && /iphone|ipad|musical_ly|wkwebview/i.test(uaLc)) {
-        return "user";
-    }
-
-    if (isMainDocumentRequest && secFetchUser === "?1" && isTikTokAppUA && (isTikTokAndroidPackage || hasTikTokIOSHeaders || hasTikTokReferer)) {
-        return "user";
-    }
-
-    if (isSubresourceRequest && isTikTokAppUA && (isTikTokAndroidPackage || hasTikTokIOSHeaders || hasTikTokReferer)) {
-        return "user";
-    }
-
-    // 4) fallback
-    if (isTikTokAppUA || hasTikTokExtraHeaders) {
-        return "review";
-    }
-
-    return "bot";
-}
-  
-function normalizeHeaders(headers) {
-    const out = {};
-    for (const [key, value] of Object.entries(headers || {})) {
-        out[String(key).toLowerCase()] = Array.isArray(value)
-        ? value.join(", ")
-        : String(value ?? "");
-    }
-    return out;
+    return {
+        category: "bot",
+        confidence: "low",
+        reason: "unknown non-user pattern fallback"
+    };
 }
